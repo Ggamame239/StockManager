@@ -37,6 +37,11 @@ function HistoryModal({ logs, onClose, loading }) {
     return <Modal title="ประวัติการเคลื่อนไหว" wide onClose={onClose}><div className="space-y-2 p-4">{loading ? <p className="py-8 text-center text-slate-400">กำลังโหลด...</p> : !logs.length ? <p className="py-8 text-center text-slate-400">ยังไม่มีประวัติ</p> : logs.map((log, index) => { const item = map[log.type] || [log.type, 'text-slate-600']; return <div className="flex items-center gap-3 rounded-xl border border-slate-200 p-3" key={`${log.timestamp}-${index}`}><div className="min-w-0 flex-1"><p className="text-xs text-slate-400">{log.timestamp || log.time}</p><p className="truncate font-semibold text-slate-800">{log.sku} · {log.name}</p><p className={`text-xs font-semibold ${item[1]}`}>{item[0]} · {log.reason}</p></div><div className="shrink-0 text-right"><p className={`font-extrabold ${log.change >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{log.change > 0 ? '+' : ''}{log.change}</p><p className="text-xs text-slate-400">{log.before} → {log.after}</p></div></div> })}</div></Modal>
 }
 
+function ImagePreview({ product, onClose }) {
+    const sources = getProductImageUrls(product.imageId)
+    return <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-2" onMouseDown={onClose}><div className="relative max-h-[96vh] max-w-[98vw]" onMouseDown={(event) => event.stopPropagation()}><img src={sources[0]} alt={product.name} className="max-h-[90vh] max-w-full rounded-xl object-contain shadow-2xl" referrerPolicy="no-referrer" /><button type="button" onClick={onClose} className="absolute -right-2 -top-2 flex h-10 w-10 items-center justify-center rounded-full bg-white text-2xl font-bold text-slate-700 shadow-lg" aria-label="ปิดรูปภาพ">×</button><p className="mt-2 text-center text-sm font-semibold text-white">{product.sku} · {product.name}</p></div></div>
+}
+
 function App() {
     const [products, setProducts] = useState([])
     const [summary, setSummary] = useState(emptySummary)
@@ -52,12 +57,18 @@ function App() {
     const [logs, setLogs] = useState([])
     const [saving, setSaving] = useState(false)
     const [logsLoading, setLogsLoading] = useState(false)
+    const [previewProduct, setPreviewProduct] = useState(null)
 
     async function loadProducts(force = false) {
         setLoading(true); setError('')
         try { const result = await stockService.list(force); setProducts(result.items || []); setSummary(result.summary || emptySummary); setCustomers(result.customers || []) } catch (loadError) { setError(loadError.message) } finally { setLoading(false) }
     }
-    useEffect(() => { loadProducts() }, [])
+    useEffect(() => {
+        loadProducts()
+        const handleImagePreview = (event) => setPreviewProduct(event.detail)
+        window.addEventListener('stock-image-preview', handleImagePreview)
+        return () => window.removeEventListener('stock-image-preview', handleImagePreview)
+    }, [])
 
     const filtered = useMemo(() => products.filter((product) => { const text = `${product.sku} ${product.name} ${product.customer} ${product.material}`.toLowerCase(); return (!query || text.includes(query.trim().toLowerCase())) && (!customer || product.customer === customer) && (!status || product.status === status) }), [products, query, customer, status])
 
@@ -79,7 +90,9 @@ function DriveImage({ imageId, alt = '' }) {
 }
 
 function ProductImage({ product, large = false }) {
-    return <div className={`flex shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-100 text-xl ${large ? 'h-20 w-20' : 'h-12 w-12'}`}>{product.imageId ? <DriveImage imageId={product.imageId} alt={product.name} /> : '📦'}</div>
+    const [preview, setPreview] = useState(false)
+    const openPreview = () => setPreview(true)
+    return <>{<div className={`flex shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-100 text-xl ${large ? 'h-20 w-20' : 'h-12 w-12'} ${product.imageId ? 'cursor-zoom-in' : ''}`} onClick={product.imageId ? openPreview : undefined} role={product.imageId ? 'button' : undefined} tabIndex={product.imageId ? 0 : undefined} onKeyDown={(event) => { if (event.key === 'Enter' && product.imageId) openPreview() }}>{product.imageId ? <DriveImage imageId={product.imageId} alt={product.name} /> : '📦'}</div>}{preview && <ImagePreview product={product} onClose={() => setPreview(false)} />}</>
 }
 
 export default App
