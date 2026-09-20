@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>P.Tech Stock Manager</title>
+  <desc>Modern app icon derived from the P.tech Inter Precision logo, using the original blue and orange P/I mark with a hexagonal frame.</desc>
+
+  <!-- Background -->
+  <rect width="512" height="512" rx="92" fill="#ffffff"/>
+
+  <!-- Hexagonal frame -->
+  <path d="M151 38 H361 L474 256 L361 474 H151 L38 256 Z"
+        fill="none" stroke="#303030" stroke-width="24"
+        stroke-linejoin="round"/>
+
+  <!-- Simplified P / I brand mark -->
+  <g stroke="#303030" stroke-width="7" stroke-linejoin="round">
+    <!-- Blue P -->
+    <path fill="#55A9D6"
+          d="M142 150 H282
+             C341 150 373 184 373 235
+             C373 286 341 320 282 320
+             H222 V405 H142 Z
+             M222 207 V263 H275
+             C295 263 306 253 306 235
+             C306 217 295 207 275 207 Z"/>
+
+    <!-- Orange I -->
+    <path fill="#E76D52"
+          d="M252 139 H316 V292 H252 Z
+             M252 292 H316 V405 H252 Z"/>
+
+    <!-- Dot -->
+    <circle cx="284" cy="91" r="29" fill="#E76D52"/>
+  </g>
+
+  <!-- Stock / inventory cue: three small boxes -->
+  <g stroke="#303030" stroke-width="5" stroke-linejoin="round">
+    <rect x="330" y="342" width="37" height="37" rx="4" fill="#55A9D6"/>
+    <rect x="373" y="342" width="37" height="37" rx="4" fill="#E76D52"/>
+    <rect x="351" y="384" width="37" height="37" rx="4" fill="#55A9D6"/>
+  </g>
+
+  <!-- Small label -->
+  <text x="256" y="448" text-anchor="middle"
+        font-family="Arial, Helvetica, sans-serif"
+        font-size="22" font-weight="700" letter-spacing="2"
+        fill="#303030">STOCK MANAGER</text>
+</svg>
