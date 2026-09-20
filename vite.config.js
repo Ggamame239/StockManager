@@ -14,7 +14,7 @@ export default defineConfig(({ mode }) => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['favicon.svg'],
+        includeAssets: ['icon.svg'],
         manifest: {
           name: 'P.tech Stock Manager',
           short_name: 'P.tech Stock',
@@ -24,8 +24,7 @@ export default defineConfig(({ mode }) => {
           display: 'standalone',
           start_url: '/',
           icons: [
-            { src: '/pwa-192.png', sizes: '192x192', type: 'image/png' },
-            { src: '/pwa-512.png', sizes: '512x512', type: 'image/png' },
+            { src: '/icon.svg', sizes: '512x512', type: 'image/svg+xml' },
           ],
         },
       }),
