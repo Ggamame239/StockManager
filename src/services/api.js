@@ -1,5 +1,15 @@
-const DIRECT_API_URL = (import.meta.env.VITE_APPS_SCRIPT_URL || '').trim()
-const API_URL = import.meta.env.DEV ? '/apps-script-api' : DIRECT_API_URL
+const API_ENDPOINTS = {
+    stock: {
+        url: (import.meta.env.VITE_APPS_SCRIPT_URL || '').trim(),
+        proxy: '/apps-script-api',
+        variable: 'VITE_APPS_SCRIPT_URL',
+    },
+    po: {
+        url: (import.meta.env.VITE_PO_APPS_SCRIPT_URL || '').trim(),
+        proxy: '/po-tracker-api',
+        variable: 'VITE_PO_APPS_SCRIPT_URL',
+    },
+}
 
 export class ApiError extends Error {
     constructor(message, response) {
@@ -9,14 +19,17 @@ export class ApiError extends Error {
     }
 }
 
-export async function request(action, payload = {}) {
-    if (!API_URL) {
-        throw new ApiError('ยังไม่ได้ตั้งค่า VITE_APPS_SCRIPT_URL', null)
+export async function request(action, payload = {}, service = 'stock') {
+    const endpoint = API_ENDPOINTS[service] || API_ENDPOINTS.stock
+    const apiUrl = import.meta.env.DEV ? endpoint.proxy : endpoint.url
+
+    if (!apiUrl) {
+        throw new ApiError(`ยังไม่ได้ตั้งค่า ${endpoint.variable}`, null)
     }
 
     let response
     try {
-        response = await fetch(API_URL, {
+        response = await fetch(apiUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({ action, ...payload }),

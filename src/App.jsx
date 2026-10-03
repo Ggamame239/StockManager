@@ -6,6 +6,7 @@ import { Badge } from './components/UI/Badge'
 import { formatNumber } from './utils/format'
 import { resizeImage } from './utils/image'
 import { getProductImageUrls, stockService } from './services/stockService'
+import { POTracker } from './components/POTrackerLive'
 import './App.css'
 
 const emptySummary = { totalSku: 0, totalQty: 0, lowCount: 0, zeroCount: 0 }
@@ -42,7 +43,7 @@ function ImagePreview({ product, onClose }) {
     return <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-2" onMouseDown={onClose}><div className="relative max-h-[96vh] max-w-[98vw]" onMouseDown={(event) => event.stopPropagation()}><img src={sources[0]} alt={product.name} className="max-h-[90vh] max-w-full rounded-xl object-contain shadow-2xl" referrerPolicy="no-referrer" /><button type="button" onClick={onClose} className="absolute -right-2 -top-2 flex h-10 w-10 items-center justify-center rounded-full bg-white text-2xl font-bold text-slate-700 shadow-lg" aria-label="ปิดรูปภาพ">×</button><p className="mt-2 text-center text-sm font-semibold text-white">{product.sku} · {product.name}</p></div></div>
 }
 
-function App() {
+function StockApp() {
     const [products, setProducts] = useState([])
     const [summary, setSummary] = useState(emptySummary)
     const [customers, setCustomers] = useState([])
@@ -93,6 +94,18 @@ function ProductImage({ product, large = false }) {
     const [preview, setPreview] = useState(false)
     const openPreview = () => setPreview(true)
     return <>{<div className={`flex shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-100 text-xl ${large ? 'h-20 w-20' : 'h-12 w-12'} ${product.imageId ? 'cursor-zoom-in' : ''}`} onClick={product.imageId ? openPreview : undefined} role={product.imageId ? 'button' : undefined} tabIndex={product.imageId ? 0 : undefined} onKeyDown={(event) => { if (event.key === 'Enter' && product.imageId) openPreview() }}>{product.imageId ? <DriveImage imageId={product.imageId} alt={product.name} /> : '📦'}</div>}{preview && <ImagePreview product={product} onClose={() => setPreview(false)} />}</>
+}
+
+function App() {
+    const [module, setModule] = useState('stock')
+    useEffect(() => {
+        const handleModuleChange = (event) => setModule(event.detail)
+        window.addEventListener('app-module-change', handleModuleChange)
+        return () => window.removeEventListener('app-module-change', handleModuleChange)
+    }, [])
+    return module === 'po'
+        ? <div className="stock-app min-h-screen bg-slate-100 pb-10"><Header module="po" onModuleChange={setModule} /><main className="mx-auto mt-5 max-w-7xl px-4"><POTracker /></main></div>
+        : <StockApp />
 }
 
 export default App

@@ -1,3 +1,15 @@
+function doGet() {
+  return HtmlService.createTemplateFromFile('Index')
+    .evaluate()
+    .setTitle('PO Tracker | P.tech interprecision')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+function include(fileName) {
+  return HtmlService.createHtmlOutputFromFile(fileName).getContent();
+}
+
 function doPost(e) {
   try {
     var raw = e && e.postData && e.postData.contents ? e.postData.contents : '{}';
@@ -28,6 +40,18 @@ function doPost(e) {
           success: true,
           imageId: saveImage_(data.image, data.sku || 'ITEM')
         };
+        break;
+      case 'po_list':
+        result = poGetPOData_();
+        break;
+      case 'po_save':
+        result = data.row ? poUpdatePO_(data) : poAddPO_(data);
+        break;
+      case 'po_customer_add':
+        result = poAddCustomer_(data.name);
+        break;
+      case 'po_toggle_paid':
+        result = poTogglePaid_(data.row, data.status);
         break;
       default:
         throw new Error('ไม่รู้จัก action: ' + action);
