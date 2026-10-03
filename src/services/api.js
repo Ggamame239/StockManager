@@ -21,11 +21,10 @@ export class ApiError extends Error {
 
 export async function request(action, payload = {}, service = 'stock') {
     const endpoint = API_ENDPOINTS[service] || API_ENDPOINTS.stock
-    const apiUrl = import.meta.env.DEV ? endpoint.proxy : endpoint.url
-
-    if (!apiUrl) {
+    if (!endpoint.url) {
         throw new ApiError(`ยังไม่ได้ตั้งค่า ${endpoint.variable}`, null)
     }
+    const apiUrl = import.meta.env.DEV ? endpoint.proxy : endpoint.url
 
     let response
     try {
