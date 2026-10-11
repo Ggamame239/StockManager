@@ -4,7 +4,7 @@ import { poApiService } from '../services/poApiService'
 import { formatNumber } from '../utils/format'
 
 const emptyRecord = {
-    row: '', poNumber: '', customer: '', quotation: '', poDateISO: '', amount: '',
+    id: '', row: '', poNumber: '', customer: '', quotation: '', poDateISO: '', amount: '',
     invoice: '', invDateISO: '', credit: 30, dueDateISO: '', payStatus: 'Unpaid', delivery: '',
 }
 const emptyRecords = []
@@ -43,7 +43,7 @@ function RecordModal({ record, customers, options, onClose, onSave, onAddCustome
     }
     return <div className="fixed inset-0 z-40 flex items-end justify-center bg-slate-950/60 p-0 sm:items-center sm:p-4" onMouseDown={onClose}>
         <form onSubmit={submit} onMouseDown={(event) => event.stopPropagation()} className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl">
-            <div className="mb-5 flex items-center justify-between"><h2 className="text-lg font-bold text-slate-900">{record.row ? 'แก้ไข PO' : 'เพิ่ม PO ใหม่'}</h2><button type="button" onClick={onClose} className="text-3xl leading-none text-slate-500" aria-label="ปิด">×</button></div>
+            <div className="mb-5 flex items-center justify-between"><h2 className="text-lg font-bold text-slate-900">{record.id ? 'แก้ไข PO' : 'เพิ่ม PO ใหม่'}</h2><button type="button" onClick={onClose} className="text-3xl leading-none text-slate-500" aria-label="ปิด">×</button></div>
             <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="PO Number" value={form.poNumber} onChange={set('poNumber')} />
                 <label className="block text-sm font-semibold text-slate-700">ชื่อลูกค้า<span className="text-rose-500"> *</span><span className="mt-1.5 flex gap-2"><select value={form.customer} onChange={(event) => set('customer')(event.target.value)} required className="min-w-0 flex-1 rounded-xl border-2 border-slate-200 bg-white px-3 py-3"><option value="">เลือกลูกค้า</option>{customers.map((customer) => <option key={customer} value={customer}>{customer}</option>)}</select><button type="button" onClick={onAddCustomer} className="shrink-0 rounded-xl bg-slate-100 px-3 font-bold text-slate-700" aria-label="เพิ่มลูกค้า">+</button></span></label>
@@ -117,20 +117,20 @@ export function POTracker() {
         finally { setLoading(false) }
     }
     useEffect(() => {
-        let active = true
-        poApiService.list().then((result) => {
-            if (!active) return
+        const unsubscribe = poApiService.subscribe((result) => {
             setError('')
             setData((current) => ({ ...current, ...result }))
-        }).catch((loadError) => {
-            if (active) setError(loadError.message)
-        }).finally(() => {
-            if (active) setLoading(false)
+            setLoading(false)
+        }, (loadError) => {
+            setError(loadError.message)
+            setLoading(false)
         })
-        return () => { active = false }
+        return unsubscribe
     }, [])
 
     const records = data.records ?? emptyRecords
+    const syncErrors = data.syncErrors || []
+    const syncConflictCount = data.conflicts?.length ?? 0
     const filtered = useMemo(() => {
         const text = query.trim().toLowerCase()
         return records.filter((record) => {
@@ -143,7 +143,7 @@ export function POTracker() {
         }).sort((left, right) => {
             if (sort === 'amount') return right.amount - left.amount
             if (sort === 'podate') return (right.poDateISO || '').localeCompare(left.poDateISO || '')
-            if (sort === 'row') return left.row - right.row
+            if (sort === 'row') return String(left.sheetRow ?? left.row).localeCompare(String(right.sheetRow ?? right.row), undefined, { numeric: true })
             if (left.paid !== right.paid) return left.paid ? 1 : -1
             return (left.dueDateISO || '9999').localeCompare(right.dueDateISO || '9999')
         })
@@ -155,8 +155,10 @@ export function POTracker() {
             const result = await poApiService.save(record)
             setSelected(null)
             setToast(result.message || 'บันทึก PO เรียบร้อย')
-            await loadData()
-        } catch (saveError) { setError(saveError.message) }
+        } catch (saveError) {
+            if (saveError.persisted) setSelected({ ...record, id: saveError.documentId })
+            setError(saveError.message)
+        }
         finally { setSaving(false) }
     }
 
@@ -176,10 +178,31 @@ export function POTracker() {
             ? options.find((value) => /paid|รับแล้ว|ชำระแล้ว/i.test(value) && !/unpaid|ยังไม่/i.test(value)) || 'Paid'
             : options.find((value) => /unpaid|ยังไม่/i.test(value)) || 'Unpaid'
         try {
-            const result = await poApiService.togglePaid(record.row, status)
+            const result = await poApiService.togglePaid(record.id, status)
             setToast(result.message || 'อัปเดตสถานะแล้ว')
-            await loadData()
         } catch (toggleError) { setError(toggleError.message) }
+    }
+
+    async function deleteRecord(record) {
+        if (!window.confirm(`ยืนยันลบ PO "${record.poNumber || record.quotation}"?\nระบบจะเก็บประวัติการลบและซิงก์ไปยัง Sheet`)) return
+        try {
+            await poApiService.remove(record.id)
+            setToast('ลบ PO เรียบร้อย')
+        } catch (deleteError) {
+            setError(deleteError.message)
+        }
+    }
+
+    async function retrySheetSync() {
+        for (const record of syncErrors) {
+            try {
+                if (record.entityType === 'customer') await poApiService.retryCustomerSync(record.id)
+                else await poApiService.retrySync(record.id)
+            } catch (syncError) {
+                setError(`ซิงก์ ${record.poNumber || record.name || record.id} ไม่สำเร็จ: ${syncError.message}`)
+                return
+            }
+        }
     }
 
     const summary = data.summary || {}
@@ -191,6 +214,8 @@ export function POTracker() {
         <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-wider text-slate-500">P.tech interprecision</p><h1 className="font-['Space_Grotesk'] text-2xl font-bold text-slate-900 sm:text-3xl">ระบบติดตามใบสั่งซื้อ</h1></div><div className="flex gap-2"><Button variant="secondary" onClick={loadData} disabled={loading} aria-label="รีเฟรชข้อมูล">{loading ? 'กำลังโหลด...' : 'รีเฟรช'}</Button><Button onClick={() => openRecord()}>+ เพิ่ม PO ใหม่</Button></div></div>
 
         {error && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700"><span>{error}</span><button onClick={() => setError('')} className="font-bold" aria-label="ปิดข้อความผิดพลาด">×</button></div>}
+        {syncErrors.length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800"><span>มี {syncErrors.length} รายการ (PO/ลูกค้า) ซิงก์ไป PO Sheet ไม่สำเร็จ</span><Button variant="secondary" onClick={retrySheetSync}>ลองซิงก์ใหม่</Button></div>}
+        {syncConflictCount > 0 && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">พบข้อมูล PO ขัดแย้ง {syncConflictCount} รายการ ระบบไม่เขียนทับเงียบ ๆ โปรดตรวจเอกสาร `syncConflicts` ก่อนแก้ไขต่อ</div>}
         {toast && <div className="flex items-center justify-between rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white"><span>{toast}</span><button onClick={() => setToast('')} aria-label="ปิดข้อความ">×</button></div>}
 
         <section className="grid grid-cols-2 gap-3 lg:grid-cols-5">
@@ -207,8 +232,8 @@ export function POTracker() {
         </section>
 
         {loading ? <div className="rounded-2xl bg-white py-12 text-center text-slate-400">กำลังโหลดข้อมูล...</div> : <>
-            <section className="hidden overflow-hidden rounded-2xl bg-white shadow-sm md:block"><div className="overflow-x-auto"><table className="w-full whitespace-nowrap text-sm"><thead className="bg-slate-100 text-xs text-slate-600"><tr>{['PO Number', 'ลูกค้า', 'ใบเสนอราคา', 'วันที่รับ PO', 'ยอดเงิน', 'อินวอย', 'วางบิล', 'เครดิต', 'ครบกำหนด', 'รับเงิน', 'ส่งของ', 'จัดการ'].map((heading) => <th key={heading} className="px-3 py-3 text-left font-semibold">{heading}</th>)}</tr></thead><tbody className="divide-y divide-slate-100">{filtered.map((record) => <tr key={record.row} className={`hover:bg-slate-50 ${record.state === 'overdue' ? 'bg-rose-50/60' : record.state === 'duesoon' ? 'bg-amber-50/60' : ''}`}><td className="px-3 py-3 font-bold">{record.poNumber || '-'}</td><td className="max-w-52 truncate px-3 py-3" title={record.customer}>{record.customer || '-'}</td><td className="px-3 py-3">{record.quotation || '-'}</td><td className="px-3 py-3 text-center text-xs">{record.poDate || '-'}</td><td className="px-3 py-3 text-right font-bold">{money(record.amount)}</td><td className="px-3 py-3">{record.invoice || '-'}</td><td className="px-3 py-3 text-center text-xs">{record.invDate || '-'}</td><td className="px-3 py-3 text-center">{record.credit || '-'}</td><td className="px-3 py-3 text-center">{dueCell(record)}</td><td className="px-3 py-3 text-center"><PayBadge record={record} /></td><td className="px-3 py-3 text-center"><DeliveryBadge record={record} /></td><td className="px-3 py-3"><div className="flex justify-center gap-1.5"><button onClick={() => openRecord(record)} className="rounded-lg bg-slate-700 px-3 py-2 text-xs font-bold text-white">แก้ไข</button><button onClick={() => togglePaid(record, !record.paid)} className={`rounded-lg px-3 py-2 text-xs font-bold ${record.paid ? 'bg-slate-200 text-slate-700' : 'bg-emerald-600 text-white'}`}>{record.paid ? '↩ ยกเลิก Paid' : '✓ ติ๊กว่า Paid'}</button></div></td></tr>)}</tbody></table>{!filtered.length && <p className="py-12 text-center text-slate-400">ไม่พบข้อมูลที่ค้นหา</p>}</div></section>
-            <section className="space-y-3 md:hidden">{filtered.map((record) => <article key={record.row} className={`rounded-xl border-l-4 bg-white p-4 shadow-sm ${record.state === 'overdue' ? 'border-rose-500' : record.state === 'duesoon' ? 'border-amber-500' : record.paid ? 'border-emerald-500' : 'border-slate-300'}`}><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate font-bold text-slate-800">{record.poNumber || record.quotation || '-'}</p><p className="truncate text-xs text-slate-500">{record.customer || '-'}</p></div><PayBadge record={record} /></div><p className="mt-2 text-right text-2xl font-extrabold text-slate-800">฿{money(record.amount)}</p><div className="mt-2 grid grid-cols-2 gap-2 text-xs"><MobileInfo label="ใบเสนอราคา" value={record.quotation} /><MobileInfo label="อินวอย" value={record.invoice} /><MobileInfo label="วันที่รับ PO" value={record.poDate} /><MobileInfo label="วางบิล" value={record.invDate} /><MobileInfo label="เครดิต" value={record.credit ? `${record.credit} วัน` : '-'} /><div><span className="text-slate-400">ครบกำหนด</span><br />{dueCell(record)}</div></div><div className="mt-2"><DeliveryBadge record={record} /></div><div className="mt-3 grid grid-cols-2 gap-2"><button onClick={() => openRecord(record)} className="rounded-xl bg-slate-700 py-3 text-sm font-bold text-white">แก้ไข</button><button onClick={() => togglePaid(record, !record.paid)} className={`rounded-xl py-3 text-sm font-bold ${record.paid ? 'bg-slate-200 text-slate-700' : 'bg-emerald-600 text-white'}`}>{record.paid ? '↩ ยกเลิก Paid' : '✓ ติ๊กว่า Paid'}</button></div></article>)}{!filtered.length && <div className="rounded-xl bg-white p-10 text-center text-slate-400">ไม่พบข้อมูลที่ค้นหา</div>}</section>
+            <section className="hidden overflow-hidden rounded-2xl bg-white shadow-sm md:block"><div className="overflow-x-auto"><table className="w-full whitespace-nowrap text-sm"><thead className="bg-slate-100 text-xs text-slate-600"><tr>{['PO Number', 'ลูกค้า', 'ใบเสนอราคา', 'วันที่รับ PO', 'ยอดเงิน', 'อินวอย', 'วางบิล', 'เครดิต', 'ครบกำหนด', 'รับเงิน', 'ส่งของ', 'จัดการ'].map((heading) => <th key={heading} className="px-3 py-3 text-left font-semibold">{heading}</th>)}</tr></thead><tbody className="divide-y divide-slate-100">{filtered.map((record) => <tr key={record.id} className={`hover:bg-slate-50 ${record.state === 'overdue' ? 'bg-rose-50/60' : record.state === 'duesoon' ? 'bg-amber-50/60' : ''}`}><td className="px-3 py-3 font-bold">{record.poNumber || '-'}</td><td className="max-w-52 truncate px-3 py-3" title={record.customer}>{record.customer || '-'}</td><td className="px-3 py-3">{record.quotation || '-'}</td><td className="px-3 py-3 text-center text-xs">{record.poDate || '-'}</td><td className="px-3 py-3 text-right font-bold">{money(record.amount)}</td><td className="px-3 py-3">{record.invoice || '-'}</td><td className="px-3 py-3 text-center text-xs">{record.invDate || '-'}</td><td className="px-3 py-3 text-center">{record.credit || '-'}</td><td className="px-3 py-3 text-center">{dueCell(record)}</td><td className="px-3 py-3 text-center"><PayBadge record={record} /></td><td className="px-3 py-3 text-center"><DeliveryBadge record={record} /></td><td className="px-3 py-3"><div className="flex justify-center gap-1.5"><button onClick={() => openRecord(record)} className="rounded-lg bg-slate-700 px-3 py-2 text-xs font-bold text-white">แก้ไข</button><button onClick={() => togglePaid(record, !record.paid)} className={`rounded-lg px-3 py-2 text-xs font-bold ${record.paid ? 'bg-slate-200 text-slate-700' : 'bg-emerald-600 text-white'}`}>{record.paid ? '↩ ยกเลิก Paid' : '✓ ติ๊กว่า Paid'}</button><button onClick={() => deleteRecord(record)} className="rounded-lg bg-rose-600 px-2 py-2 text-xs font-bold text-white">ลบ</button></div></td></tr>)}</tbody></table>{!filtered.length && <p className="py-12 text-center text-slate-400">ไม่พบข้อมูลที่ค้นหา</p>}</div></section>
+            <section className="space-y-3 md:hidden">{filtered.map((record) => <article key={record.id} className={`rounded-xl border-l-4 bg-white p-4 shadow-sm ${record.state === 'overdue' ? 'border-rose-500' : record.state === 'duesoon' ? 'border-amber-500' : record.paid ? 'border-emerald-500' : 'border-slate-300'}`}><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate font-bold text-slate-800">{record.poNumber || record.quotation || '-'}</p><p className="truncate text-xs text-slate-500">{record.customer || '-'}</p></div><PayBadge record={record} /></div><p className="mt-2 text-right text-2xl font-extrabold text-slate-800">฿{money(record.amount)}</p><div className="mt-2 grid grid-cols-2 gap-2 text-xs"><MobileInfo label="ใบเสนอราคา" value={record.quotation} /><MobileInfo label="อินวอย" value={record.invoice} /><MobileInfo label="วันที่รับ PO" value={record.poDate} /><MobileInfo label="วางบิล" value={record.invDate} /><MobileInfo label="เครดิต" value={record.credit ? `${record.credit} วัน` : '-'} /><div><span className="text-slate-400">ครบกำหนด</span><br />{dueCell(record)}</div></div><div className="mt-2"><DeliveryBadge record={record} /></div><div className="mt-3 grid grid-cols-3 gap-2"><button onClick={() => openRecord(record)} className="rounded-xl bg-slate-700 py-3 text-sm font-bold text-white">แก้ไข</button><button onClick={() => togglePaid(record, !record.paid)} className={`rounded-xl py-3 text-sm font-bold ${record.paid ? 'bg-slate-200 text-slate-700' : 'bg-emerald-600 text-white'}`}>{record.paid ? '↩ Paid' : '✓ Paid'}</button><button onClick={() => deleteRecord(record)} className="rounded-xl bg-rose-600 py-3 text-sm font-bold text-white">ลบ</button></div></article>)}{!filtered.length && <div className="rounded-xl bg-white p-10 text-center text-slate-400">ไม่พบข้อมูลที่ค้นหา</div>}</section>
         </>}
         {selected && <RecordModal record={selected} customers={data.customers} options={options} onClose={() => setSelected(null)} onSave={saveRecord} onAddCustomer={() => openCustomerModal(true)} />}
         {customerModal && <CustomerModal onClose={() => setCustomerModal(false)} onSave={saveCustomer} />}

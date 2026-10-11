@@ -1,0 +1,82 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    match /inventory/{productId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.sku is string
+        && request.resource.data.sku.size() > 0
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.qty is number
+        && request.resource.data.qty >= 0
+        && request.resource.data.minQty is number
+        && request.resource.data.minQty >= 0;
+      allow update: if signedIn()
+        && request.resource.data.sku is string
+        && request.resource.data.name is string
+        && request.resource.data.qty is number
+        && request.resource.data.qty >= 0
+        && request.resource.data.minQty is number
+        && request.resource.data.minQty >= 0;
+      allow delete: if false;
+    }
+
+    match /stockLogs/{logId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.productId is string
+        && request.resource.data.type in ['IN', 'OUT', 'SET', 'NEW', 'EDIT', 'DELETE', 'SHEET_EDIT']
+        && request.resource.data.before is number
+        && request.resource.data.after is number
+        && request.resource.data.after >= 0;
+      allow update: if signedIn() && request.resource.data == resource.data;
+      allow delete: if false;
+    }
+
+    match /purchaseOrders/{orderId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn()
+        && request.resource.data.customer is string
+        && request.resource.data.customer.size() > 0
+        && request.resource.data.quotation is string
+        && request.resource.data.quotation.size() > 0
+        && request.resource.data.amount is number
+        && request.resource.data.amount >= 0;
+      allow delete: if false;
+    }
+
+    match /poCustomers/{customerId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn()
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0;
+      allow delete: if false;
+    }
+
+    match /poSettings/{settingId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn()
+        && request.resource.data.payStatus is list
+        && request.resource.data.delivery is list;
+      allow delete: if false;
+    }
+
+    match /syncConflicts/{conflictId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.module in ['stock', 'po']
+        && request.resource.data.entityId is string
+        && request.resource.data.status == 'open';
+      allow update, delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

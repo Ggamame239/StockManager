@@ -136,9 +136,12 @@ export const poTrackerService = {
     save: async (order) => {
         await ensureWorkbook()
         const rows = sheetRows()
-        const duplicate = rows.findIndex((row) => String(row['PO Number'] || '').trim() === order.poNumber)
+        const invoice = String(order.invoiceNumber || '').trim().toLowerCase()
+        const duplicate = invoice
+            ? rows.findIndex((row) => String(row['Invoice number'] || '').trim().toLowerCase() === invoice)
+            : -1
         const current = rows.findIndex((row) => String(row['PO Number'] || '').trim() === order.id)
-        if (duplicate >= 0 && duplicate !== current) throw new Error('PO Number ซ้ำใน PO Tracker')
+        if (duplicate >= 0 && duplicate !== current) throw new Error('Invoice ซ้ำใน PO Tracker')
         if (current >= 0) rows[current] = toLegacyRow(order)
         else rows.push(toLegacyRow(order))
         setSheetRows('PO tracker', rows, PO_COLUMNS)
@@ -159,10 +162,19 @@ export const poTrackerService = {
     },
     importRows: async (rows, customers = []) => {
         await ensureWorkbook()
-        const existing = new Set(sheetRows().map((row) => String(row['PO Number'] || '').trim()))
+        const existingInvoices = new Set(sheetRows()
+            .map((row) => String(row['Invoice number'] || '').trim().toLowerCase())
+            .filter(Boolean))
         let imported = 0
         const nextRows = sheetRows()
-        rows.forEach((row) => { if (row.poNumber && !existing.has(row.poNumber)) { nextRows.push(toLegacyRow(row)); existing.add(row.poNumber); imported++ } })
+        rows.forEach((row) => {
+            const invoice = String(row.invoiceNumber || '').trim().toLowerCase()
+            if (row.poNumber && (!invoice || !existingInvoices.has(invoice))) {
+                nextRows.push(toLegacyRow(row))
+                if (invoice) existingInvoices.add(invoice)
+                imported++
+            }
+        })
         setSheetRows('PO tracker', nextRows, PO_COLUMNS)
         const names = customerNames()
         const mergedCustomers = [...names, ...customers.filter((name) => !names.some((item) => item.toLowerCase() === name.toLowerCase()))]
@@ -174,4 +186,3 @@ export const poTrackerService = {
         XLSX.writeFile(workbook, 'Over all tracker P.tech.xlsx')
     },
 }
-

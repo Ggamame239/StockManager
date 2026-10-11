@@ -2,11 +2,13 @@ const API_ENDPOINTS = {
     stock: {
         url: (import.meta.env.VITE_APPS_SCRIPT_URL || '').trim(),
         proxy: '/apps-script-api',
+        productionProxy: '/api/stock-sync',
         variable: 'VITE_APPS_SCRIPT_URL',
     },
     po: {
         url: (import.meta.env.VITE_PO_APPS_SCRIPT_URL || '').trim(),
         proxy: '/po-tracker-api',
+        productionProxy: '/api/po-sync',
         variable: 'VITE_PO_APPS_SCRIPT_URL',
     },
 }
@@ -21,10 +23,10 @@ export class ApiError extends Error {
 
 export async function request(action, payload = {}, service = 'stock') {
     const endpoint = API_ENDPOINTS[service] || API_ENDPOINTS.stock
-    if (!endpoint.url) {
+    if (import.meta.env.DEV && !endpoint.url) {
         throw new ApiError(`ยังไม่ได้ตั้งค่า ${endpoint.variable}`, null)
     }
-    const apiUrl = import.meta.env.DEV ? endpoint.proxy : endpoint.url
+    const apiUrl = import.meta.env.DEV ? endpoint.proxy : endpoint.productionProxy
 
     let response
     try {

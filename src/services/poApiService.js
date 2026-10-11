@@ -1,8 +1,12 @@
-import { request } from './api'
+import { firestoreData } from './firestoreData'
 
 export const poApiService = {
-    list: () => request('po_list', {}, 'po'),
-    save: (record) => request('po_save', record, 'po'),
-    addCustomer: (name) => request('po_customer_add', { name }, 'po'),
-    togglePaid: (row, status) => request('po_toggle_paid', { row, status }, 'po'),
+    list: () => firestoreData.listPOs(),
+    subscribe: (onData, onError) => firestoreData.subscribePOs(onData, onError),
+    save: (record) => firestoreData.savePO(record),
+    remove: (id) => firestoreData.deletePO(id),
+    retrySync: (id) => firestoreData.retryPOSync(id),
+    retryCustomerSync: (id) => firestoreData.retryPOCustomerSync(id),
+    addCustomer: (name) => firestoreData.addCustomer(name),
+    togglePaid: (id, status) => firestoreData.togglePaid(id, status),
 }

@@ -1,31 +1,21 @@
+import { firestoreData } from './firestoreData'
 import { request } from './api'
 
-let listCache = null
-let listRequest = null
-const LIST_CACHE_MS = 30_000
-
 export const stockService = {
-    list: (force = false) => {
-        if (!force && listCache && Date.now() - listCache.createdAt < LIST_CACHE_MS) {
-            return Promise.resolve(listCache.data)
-        }
-        if (listRequest) return listRequest
-        listRequest = request('list').then((data) => {
-            listCache = { createdAt: Date.now(), data }
-            return data
-        }).finally(() => {
-            listRequest = null
-        })
-        return listRequest
+    list: () => firestoreData.listStock(),
+    subscribe: (onData, onError) => firestoreData.subscribeStock(onData, onError),
+    retrySync: (id) => firestoreData.retryStockSync(id),
+    logs: (productId) => firestoreData.listStockLogs(productId),
+    create: (product) => firestoreData.saveStock(product),
+    update: (product) => firestoreData.saveStock(product),
+    save: (product) => firestoreData.saveStock(product),
+    adjust: (data) => firestoreData.adjustStock(data),
+    remove: (id) => firestoreData.deleteStock(id),
+    upload: async ({ sku, image }) => {
+        await firestoreData.ensureStockSyncReady()
+        return request('upload', { sku, image })
     },
-    logs: (productId) => request('logs', { productId }),
-    create: (product) => request('create', product),
-    update: (product) => request('update', product),
-    save: (product) => request(product.row ? 'update' : 'create', product),
-    adjust: ({ row, type, amount, reason }) => request('adjust', { row, type, amount, reason }),
-    remove: (row) => request('delete', { row }),
-    upload: ({ sku, image }) => request('upload', { sku, image }),
-    invalidateListCache: () => { listCache = null },
+    invalidateListCache: () => {},
 }
 
 export function getProductImageUrl(imageId) {
