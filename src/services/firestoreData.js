@@ -224,13 +224,13 @@ export const firestoreData = {
         const reference = doc(db, INVENTORY, id)
         const normalizedSku = sku.toLocaleLowerCase()
         const logReference = doc(collection(db, STOCK_LOGS))
+        const matches = await getDocs(query(collection(db, INVENTORY), where('normalizedSku', '==', normalizedSku)))
+        if (matches.docs.some((match) => match.id !== id && !match.data().deletedAt)) {
+            throw new Error(`รหัสสินค้า ${sku} มีอยู่แล้ว`)
+        }
         let qtyChange
         let revision = 1
         await runTransaction(db, async (transaction) => {
-            const matches = await transaction.get(query(collection(db, INVENTORY), where('normalizedSku', '==', normalizedSku)))
-            if (matches.docs.some((match) => match.id !== id && !match.data().deletedAt)) {
-                throw new Error(`รหัสสินค้า ${sku} มีอยู่แล้ว`)
-            }
             const current = await transaction.get(reference)
             revision = (Number(current.data()?.revision) || 0) + 1
             const before = Number(current.data()?.qty) || 0
@@ -485,74 +485,92 @@ export const firestoreData = {
     },
 
     async savePO(input) {
-        await ensureAnonymousAuth()
-        await ensureSheetSyncReady('po')
-        const customer = requireText(input.customer, 'ชื่อลูกค้า')
-        const quotation = requireText(input.quotation, 'เลขใบเสนอราคา')
-        const amount = Number(input.amount)
-        if (!Number.isFinite(amount) || amount < 0) throw new Error('ยอดเงินต้องเป็นตัวเลขตั้งแต่ 0 ขึ้นไป')
-        const id = input.id || doc(collection(db, PURCHASE_ORDERS)).id
-        const reference = doc(db, PURCHASE_ORDERS, id)
-        const poNumber = String(input.poNumber || '').trim()
-        const invoice = String(input.invoice || '').trim()
-        const normalizedInvoice = invoice.toLowerCase()
-        let revision = 1
-        let sheetRow
-        await runTransaction(db, async (transaction) => {
+        let stage = 'ตรวจสอบข้อมูล PO'
+        try {
+            stage = 'ยืนยันตัวตน Firebase'
+            await ensureAnonymousAuth()
+            stage = 'ตรวจความพร้อมของ PO Google Sheets'
+            await ensureSheetSyncReady('po')
+            const customer = requireText(input.customer, 'ชื่อลูกค้า')
+            const quotation = requireText(input.quotation, 'เลขใบเสนอราคา')
+            const amount = Number(input.amount)
+            if (!Number.isFinite(amount) || amount < 0) throw new Error('ยอดเงินต้องเป็นตัวเลขตั้งแต่ 0 ขึ้นไป')
+            const id = input.id || doc(collection(db, PURCHASE_ORDERS)).id
+            const reference = doc(db, PURCHASE_ORDERS, id)
+            const poNumber = String(input.poNumber || '').trim()
+            const invoice = String(input.invoice || '').trim()
+            const normalizedInvoice = invoice.toLowerCase()
+            let revision = 1
+            let sheetRow
             if (normalizedInvoice) {
-                const duplicates = await transaction.get(query(collection(db, PURCHASE_ORDERS), where('normalizedInvoice', '==', normalizedInvoice)))
+                stage = 'ตรวจสอบเลข Invoice ซ้ำใน Firestore'
+                const duplicates = await getDocs(query(collection(db, PURCHASE_ORDERS), where('normalizedInvoice', '==', normalizedInvoice)))
                 if (duplicates.docs.some((item) => item.id !== id && !item.data().deletedAt)) throw new Error(`Invoice ${invoice} ซ้ำ`)
             }
-            const current = await transaction.get(reference)
-            revision = (Number(current.data()?.revision) || 0) + 1
-            sheetRow = current.data()?.sheetRow ?? input.sheetRow ?? null
-            const fields = { ...input }
-            delete fields.id
-            delete fields.row
-            delete fields.paid
-            delete fields.delivered
-            delete fields.daysLeft
-            delete fields.state
-            transaction.set(reference, {
-                ...fields,
+            await runTransaction(db, async (transaction) => {
+                stage = 'อ่าน PO ปัจจุบันจาก Firestore'
+                const current = await transaction.get(reference)
+                revision = (Number(current.data()?.revision) || 0) + 1
+                sheetRow = current.data()?.sheetRow ?? input.sheetRow ?? null
+                const fields = { ...input }
+                delete fields.id
+                delete fields.row
+                delete fields.paid
+                delete fields.delivered
+                delete fields.daysLeft
+                delete fields.state
+                stage = 'เขียน PO ลง Firestore'
+                transaction.set(reference, {
+                    ...fields,
+                    customer,
+                    quotation,
+                    amount,
+                    poNumber,
+                    invoice,
+                    normalizedPONumber: poNumber.toLocaleLowerCase(),
+                    normalizedInvoice,
+                    sheetRow,
+                    payStatus: input.payStatus || 'Unpaid',
+                    delivery: input.delivery || '',
+                    updatedAt: serverTimestamp(),
+                    createdAt: current.data()?.createdAt || serverTimestamp(),
+                    revision,
+                }, { merge: true })
+            })
+            const syncRecord = {
+                ...input,
+                id,
                 customer,
                 quotation,
-                amount,
                 poNumber,
                 invoice,
-                normalizedPONumber: poNumber.toLocaleLowerCase(),
-                normalizedInvoice,
+                amount,
                 sheetRow,
+                revision,
                 payStatus: input.payStatus || 'Unpaid',
                 delivery: input.delivery || '',
-                updatedAt: serverTimestamp(),
-                createdAt: current.data()?.createdAt || serverTimestamp(),
-                revision,
-            }, { merge: true })
-        })
-        const syncRecord = {
-            ...input,
-            id,
-            customer,
-            quotation,
-            poNumber,
-            invoice,
-            amount,
-            sheetRow,
-            revision,
-            payStatus: input.payStatus || 'Unpaid',
-            delivery: input.delivery || '',
-        }
-        try {
-            await requestWithRetry('po_sync_from_firestore', { id, revision, record: syncRecord }, 'po')
-            await updateDoc(reference, { sheetSync: { status: 'synced', revision, updatedAt: serverTimestamp(), error: '' } })
+            }
+            stage = 'ซิงก์ PO ไป Google Sheets'
+            try {
+                await requestWithRetry('po_sync_from_firestore', { id, revision, record: syncRecord }, 'po')
+                stage = 'อัปเดตสถานะการซิงก์ใน Firestore'
+                await updateDoc(reference, { sheetSync: { status: 'synced', revision, updatedAt: serverTimestamp(), error: '' } })
+            } catch (error) {
+                await updateDoc(reference, { sheetSync: { status: 'error', revision, updatedAt: serverTimestamp(), error: error.message } })
+                error.persisted = true
+                error.documentId = id
+                throw error
+            }
+            return { success: true, id, message: input.id ? 'อัปเดตข้อมูลเรียบร้อย' : 'บันทึก PO เรียบร้อย' }
         } catch (error) {
-            await updateDoc(reference, { sheetSync: { status: 'error', revision, updatedAt: serverTimestamp(), error: error.message } })
-            error.persisted = true
-            error.documentId = id
-            throw error
+            if (error instanceof Error) {
+                const diagnosticError = new Error(`บันทึก PO ไม่สำเร็จระหว่าง${stage}: ${error.message}`)
+                diagnosticError.persisted = error.persisted
+                diagnosticError.documentId = error.documentId
+                throw diagnosticError
+            }
+            throw new Error(`บันทึก PO ไม่สำเร็จระหว่าง${stage}: ${String(error)}`)
         }
-        return { success: true, id, message: input.id ? 'อัปเดตข้อมูลเรียบร้อย' : 'บันทึก PO เรียบร้อย' }
     },
 
     async deletePO(id) {
@@ -622,17 +640,17 @@ export const firestoreData = {
         const name = requireText(input, 'ชื่อลูกค้า')
         const normalizedName = name.toLocaleLowerCase()
         let customerId
-        await runTransaction(db, async (transaction) => {
-            const duplicates = await transaction.get(query(collection(db, PO_CUSTOMERS), where('normalizedName', '==', normalizedName)))
-            const existing = duplicates.docs.find((item) => !item.data().deletedAt)
-            if (existing) {
-                customerId = existing.id
-                return
-            }
+        const duplicates = await getDocs(query(collection(db, PO_CUSTOMERS), where('normalizedName', '==', normalizedName)))
+        const existing = duplicates.docs.find((item) => !item.data().deletedAt)
+        if (existing) {
+            customerId = existing.id
+        } else {
             const reference = doc(collection(db, PO_CUSTOMERS))
             customerId = reference.id
-            transaction.set(reference, { name, normalizedName, createdAt: serverTimestamp() })
-        })
+            await runTransaction(db, async (transaction) => {
+                transaction.set(reference, { name, normalizedName, createdAt: serverTimestamp() })
+            })
+        }
         const reference = doc(db, PO_CUSTOMERS, customerId)
         try {
             await requestWithRetry('po_sync_customer_from_firestore', { id: customerId, name }, 'po')
