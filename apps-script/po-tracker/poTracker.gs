@@ -450,8 +450,22 @@ function poSyncFromFirestoreUnlocked_(data) {
     throw new Error('พบการแก้ไข PO ใน Google Sheets ที่ยังไม่ซิงก์; บันทึก conflict ไว้ตรวจสอบแล้ว');
   }
   if (sheetRevision > revision) {
-    poRecordSyncConflict_('web', id, record, existing);
-    throw new Error('ข้อมูล PO ใน Google Sheets ใหม่กว่า Firebase; บันทึก conflict ไว้เพื่อตรวจสอบแล้ว');
+    poSyncSheetRowToFirestore_(sheet, row, true, id);
+    firebaseListDocuments_('syncConflicts')
+      .filter(function (item) {
+        return item.data.module === 'po' &&
+          item.data.entityId === id &&
+          item.data.source === 'web' &&
+          item.data.status === 'open';
+      })
+      .forEach(function (item) {
+        firebasePatchDocument_('syncConflicts', item.id, {
+          status: 'resolved',
+          resolution: 'sheet',
+          resolvedAt: new Date().toISOString()
+        });
+      });
+    throw new Error('Google Sheets เป็นข้อมูลหลัก: อัปเดต Firestore จากแถวใน Sheet แล้ว แต่การแก้ไขจากหน้าเว็บครั้งนี้ไม่ได้ถูกนำไปใช้ กรุณาโหลดข้อมูลใหม่ก่อนแก้ไขอีกครั้ง');
   }
   if (record.deletedAt) {
     sheet.getRange(row, columns.id, 1, 2).setValues([[id, String(record.deletedAt)]]);

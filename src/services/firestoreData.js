@@ -551,6 +551,10 @@ export const firestoreData = {
                 stage = 'อัปเดตสถานะการซิงก์ใน Firestore'
                 await updateDoc(reference, { sheetSync: { status: 'synced', revision, updatedAt: serverTimestamp(), error: '' } })
             } catch (error) {
+                if (error.message?.startsWith('Google Sheets เป็นข้อมูลหลัก:')) {
+                    error.sheetAuthoritative = true
+                    throw error
+                }
                 await updateDoc(reference, { sheetSync: { status: 'error', revision, updatedAt: serverTimestamp(), error: error.message } })
                 error.persisted = true
                 error.documentId = id
@@ -562,6 +566,7 @@ export const firestoreData = {
                 const diagnosticError = new Error(`บันทึก PO ไม่สำเร็จระหว่าง${stage}: ${error.message}`)
                 diagnosticError.persisted = error.persisted
                 diagnosticError.documentId = error.documentId
+                diagnosticError.sheetAuthoritative = error.sheetAuthoritative
                 throw diagnosticError
             }
             throw new Error(`บันทึก PO ไม่สำเร็จระหว่าง${stage}: ${String(error)}`)
@@ -607,6 +612,7 @@ export const firestoreData = {
             await updateDoc(reference, { sheetSync: { status: 'synced', revision, updatedAt: serverTimestamp(), error: '' } })
             return { success: true }
         } catch (error) {
+            if (error.message?.startsWith('Google Sheets เป็นข้อมูลหลัก:')) throw error
             await updateDoc(reference, { sheetSync: { status: 'error', revision, updatedAt: serverTimestamp(), error: error.message } })
             throw error
         }
