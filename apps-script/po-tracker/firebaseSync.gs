@@ -1,6 +1,13 @@
 var FIREBASE_SYNC_TOKEN_CACHE_ = '';
 var FIREBASE_SYNC_TOKEN_EXPIRES_AT_ = 0;
 
+function poAuthorizeExternalRequest() {
+  var response = UrlFetchApp.fetch('https://www.google.com/robots.txt', {
+    muteHttpExceptions: true
+  });
+  Logger.log('UrlFetch authorization completed with HTTP ' + response.getResponseCode());
+}
+
 function firebaseSyncProperties_() {
   var properties = PropertiesService.getScriptProperties();
   var apiKey = properties.getProperty('FIREBASE_API_KEY');

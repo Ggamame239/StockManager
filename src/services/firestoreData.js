@@ -502,11 +502,6 @@ export const firestoreData = {
             const normalizedInvoice = invoice.toLowerCase()
             let revision = 1
             let sheetRow
-            if (normalizedInvoice) {
-                stage = 'ตรวจสอบเลข Invoice ซ้ำใน Firestore'
-                const duplicates = await getDocs(query(collection(db, PURCHASE_ORDERS), where('normalizedInvoice', '==', normalizedInvoice)))
-                if (duplicates.docs.some((item) => item.id !== id && !item.data().deletedAt)) throw new Error(`Invoice ${invoice} ซ้ำ`)
-            }
             await runTransaction(db, async (transaction) => {
                 stage = 'อ่าน PO ปัจจุบันจาก Firestore'
                 const current = await transaction.get(reference)

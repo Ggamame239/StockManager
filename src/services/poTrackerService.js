@@ -136,12 +136,7 @@ export const poTrackerService = {
     save: async (order) => {
         await ensureWorkbook()
         const rows = sheetRows()
-        const invoice = String(order.invoiceNumber || '').trim().toLowerCase()
-        const duplicate = invoice
-            ? rows.findIndex((row) => String(row['Invoice number'] || '').trim().toLowerCase() === invoice)
-            : -1
         const current = rows.findIndex((row) => String(row['PO Number'] || '').trim() === order.id)
-        if (duplicate >= 0 && duplicate !== current) throw new Error('Invoice ซ้ำใน PO Tracker')
         if (current >= 0) rows[current] = toLegacyRow(order)
         else rows.push(toLegacyRow(order))
         setSheetRows('PO tracker', rows, PO_COLUMNS)

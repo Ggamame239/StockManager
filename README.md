@@ -123,13 +123,15 @@ VITE_PO_APPS_SCRIPT_URL=https://script.google.com/macros/s/NEW_PO_DEPLOYMENT_ID/
 ขั้นตอนทดสอบที่ต้องทำด้วยผู้มีสิทธิ์ใน Google/Firebase:
 
 1. วางไฟล์ PO Script ใน Apps Script project แยก และตรวจ OAuth scopes ใน `appsscript.json`.
-2. บันทึก Script Properties ตามตาราง แล้วอนุญาต scopes ที่ Apps Script ขอ
+2. บันทึก Script Properties ตามตาราง แล้วเลือก `poAuthorizeExternalRequest` ใน Apps Script Editor และกด **Run** เพื่ออนุญาต `UrlFetchApp`; ฟังก์ชันนี้เรียกอ่าน `https://www.google.com/robots.txt` เท่านั้น ไม่เขียน Sheet หรือข้อมูล PO
 3. เรียก `poSetupSyncMetadata()` บนสำเนา Sheet เพื่อเพิ่ม metadata ในคอลัมน์ว่างถัดจากข้อมูลเดิม (ID, tombstone, revision และ hash จะถูกซ่อนไว้)
 4. ก่อนเปิด sync ให้ตั้ง `PO_ALLOW_SYNC=YES` และ `PO_SYNC_SPREADSHEET_ID` ให้ตรงกับ ID สำเนาทดสอบ จากนั้นเรียก `poMigrateOptionsToFirestore()` หนึ่งครั้ง
 5. ใน Script Properties ให้ตั้ง `PO_ALLOW_MIGRATION=YES` และ `PO_MIGRATION_SPREADSHEET_ID` ให้ตรงกับ ID สำเนาที่อนุมัติ ก่อนเรียก `poMigrateCustomerBatchToFirestore()` และ `poMigrateSheetBatchToFirestore()` ซ้ำจนแต่ละฟังก์ชันรายงาน `done: true`
 6. เรียก `poMigrationAudit()` เพื่อตรวจจำนวนและความตรงกันของ PO/Customer จากนั้นเปรียบเทียบข้อมูลสำคัญก่อนทดสอบแก้ไข
 7. ติดตั้ง `poInstallEditTrigger()`, `poInstallChangeTrigger()` และ `poInstallReconciliationTrigger()` บน project ทดสอบ การตรวจ reconciliation ทำครั้งละ 50 แถวทุก 15 นาที; การแก้ Sheet ปกติใช้ installable edit trigger
 8. สร้าง **test web-app deployment ใหม่** สำหรับ PO Script และใช้ URL ทดสอบเป็น `VITE_PO_APPS_SCRIPT_URL` ใน local `.env.local` หรือ `PO_APPS_SCRIPT_URL` ใน Vercel Preview เท่านั้น การสร้าง/เผยแพร่ deployment จริงยังต้องได้รับอนุมัติก่อน
+
+หากแอปแจ้ง PO sync conflict และยืนยันแล้วว่า Sheet เป็นข้อมูลที่ถูกต้อง ให้สำรองข้อมูลก่อน วาง source รุ่นล่าสุดใน Apps Script แล้วเลือก `poResolveSingleOpenPOConflictFromSheet` และกด **Run** ฟังก์ชันทำงานเมื่อมี open PO conflict หนึ่งรายการพอดี ใช้ Stable ID หรือเลขแถวที่บันทึกใน conflict เพื่อระบุตำแหน่ง และไม่ปฏิเสธเพียงเพราะ PO Number หรือ Invoice ซ้ำ; หากไม่มีตำแหน่งแถวหรือแถวนั้นผูกกับ Firestore ID อื่น จะหยุดโดยไม่เปลี่ยนข้อมูล
 
 ห้ามตั้ง `PO_MIGRATION_SPREADSHEET_ID` เป็น Sheet จริง หรือเปิด migration จนกว่าจะสำรองข้อมูลและได้รับอนุมัติ การ migration ทำเป็นชุดละ 200 รายการและบันทึก cursor เพื่อรันต่อได้; ไม่ลบข้อมูลต้นทาง
 

@@ -461,16 +461,6 @@ function poSyncFromFirestoreUnlocked_(data) {
 
   var values = poSheetValuesFromRecord_(record);
   if (!values[1] || !values[2]) throw new Error('PO ต้องมีชื่อลูกค้าและเลขใบเสนอราคา');
-  var last = poLastDataRow_(sheet);
-  var existingRows = last >= PO_TRACKER_CFG.START_ROW
-    ? sheet.getRange(PO_TRACKER_CFG.START_ROW, 1, last - PO_TRACKER_CFG.START_ROW + 1, width).getValues()
-    : [];
-  var duplicateInvoice = values[5] && existingRows.some(function (valuesAtRow, index) {
-    return PO_TRACKER_CFG.START_ROW + index !== row &&
-      String(valuesAtRow[5] || '').trim().toLowerCase() === values[5].toLowerCase() &&
-      !valuesAtRow[columns.deletedAt - 1];
-  });
-  if (duplicateInvoice) throw new Error('Invoice ซ้ำใน Google Sheets');
   sheet.getRange(row, 1, 1, 11).setValues([values]);
   sheet.getRange(row, columns.id, 1, 4).setValues([[id, '', revision, poSyncHash_(values)]]);
   sheet.getRange(row, PO_TRACKER_COL.PO_DATE).setNumberFormat('dd-mmm-yy');
@@ -496,7 +486,7 @@ function poRecordSyncConflict_(source, id, record, sheetRow) {
   });
 }
 
-function poSyncSheetRowToFirestore_(sheet, rowNumber) {
+function poSyncSheetRowToFirestore_(sheet, rowNumber, resolveConflictFromSheet, preferredId) {
   var columns = poRequireSyncColumns_();
   if (rowNumber < PO_TRACKER_CFG.START_ROW) return;
   var range = sheet.getRange(rowNumber, 1, 1, poReadWidth_());
@@ -504,24 +494,29 @@ function poSyncSheetRowToFirestore_(sheet, rowNumber) {
   if (!String(row[0] || '').trim() && !String(row[1] || '').trim() && !String(row[2] || '').trim()) return;
   if (row[columns.deletedAt - 1]) return;
 
-  var id = String(row[columns.id - 1] || '').trim();
+  var id = preferredId || String(row[columns.id - 1] || '').trim();
+  if (preferredId && row[columns.id - 1] && String(row[columns.id - 1]).trim() !== preferredId) {
+    throw new Error('แถว PO ใน Google Sheets ผูกกับ Firestore ID อื่น; ไม่มีการเปลี่ยนข้อมูล');
+  }
   if (!id) {
     id = Utilities.getUuid().replace(/-/g, '');
     sheet.getRange(rowNumber, columns.id).setValue(id);
+  } else if (preferredId && !row[columns.id - 1]) {
+    sheet.getRange(rowNumber, columns.id).setValue(preferredId);
   }
   var hash = poSyncHash_(row);
-  if (hash === String(row[columns.hash - 1] || '')) return;
+  if (!resolveConflictFromSheet && hash === String(row[columns.hash - 1] || '')) return;
 
   var current = firebaseGetDocument_('purchaseOrders', id);
   var sheetRevision = poNumber_(row[columns.revision - 1]);
   var currentRevision = current ? poNumber_(current.revision) : 0;
-  if (current && currentRevision > sheetRevision) {
+  if (!resolveConflictFromSheet && current && currentRevision > sheetRevision) {
     poRecordSyncConflict_('sheet', id, current, row);
     sheet.getRange(rowNumber, columns.hash).setValue(hash);
     return;
   }
 
-  var revision = currentRevision + 1;
+  var revision = Math.max(currentRevision, sheetRevision) + 1;
   var record = {
     id: id,
     poNumber: String(row[0] || '').trim(),
@@ -546,23 +541,61 @@ function poSyncSheetRowToFirestore_(sheet, rowNumber) {
   if (!record.customer || !record.quotation) {
     throw new Error('PO ใน Google Sheets ต้องมีชื่อลูกค้าและเลขใบเสนอราคาก่อนซิงก์');
   }
-  var invoice = String(row[5] || '').trim().toLowerCase();
-  if (invoice) {
-    var last = poLastDataRow_(sheet);
-    var otherRows = last >= PO_TRACKER_CFG.START_ROW
-      ? sheet.getRange(PO_TRACKER_CFG.START_ROW, 1, last - PO_TRACKER_CFG.START_ROW + 1, poReadWidth_()).getValues()
-      : [];
-    var duplicateInvoice = otherRows.some(function (values, index) {
-      return PO_TRACKER_CFG.START_ROW + index !== rowNumber &&
-        String(values[5] || '').trim().toLowerCase() === invoice &&
-        !values[columns.deletedAt - 1];
-    });
-    if (duplicateInvoice) throw new Error('Invoice ซ้ำใน Google Sheets: ' + row[5]);
-  }
   poSyncCustomerNameToFirestore_(record.customer);
   firebasePatchDocument_('purchaseOrders', id, record);
   sheet.getRange(rowNumber, columns.revision).setValue(revision);
   sheet.getRange(rowNumber, columns.hash).setValue(hash);
+}
+
+function poResolveSingleOpenPOConflictFromSheet() {
+  poRequireSyncApproval_();
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var conflicts = firebaseListDocuments_('syncConflicts').filter(function (item) {
+      return item.data.module === 'po' && item.data.status === 'open';
+    });
+    if (conflicts.length !== 1) {
+      throw new Error('คาดว่าจะมี PO conflict ที่เปิดอยู่ 1 รายการ แต่พบ ' + conflicts.length + ' รายการ; ไม่มีการเปลี่ยนข้อมูล');
+    }
+
+    var conflict = conflicts[0];
+    var id = poValidateSyncId_(conflict.data.entityId);
+    var sheet = poSheet_(PO_TRACKER_CFG.PO_SHEET);
+    var rowNumber = poFindFirestoreRow_(sheet, id);
+    var columns = poRequireSyncColumns_();
+    if (!rowNumber) {
+      var last = poLastDataRow_(sheet);
+      var storedRow = Number(conflict.data.firestoreRecord && conflict.data.firestoreRecord.sheetRow);
+      if (!Number.isInteger(storedRow) || storedRow < PO_TRACKER_CFG.START_ROW || storedRow > last) {
+        throw new Error('Conflict ไม่มีเลขแถว PO ที่ใช้ระบุตำแหน่งใน Sheet ได้; ไม่มีการเปลี่ยนข้อมูล');
+      }
+      rowNumber = storedRow;
+    }
+
+    var row = sheet.getRange(rowNumber, 1, 1, poReadWidth_()).getValues()[0];
+    if (row[columns.deletedAt - 1]) throw new Error('แถว PO ใน Google Sheets ถูกลบแล้ว; ไม่มีการเปลี่ยนข้อมูล');
+    if (row[columns.id - 1] && String(row[columns.id - 1]).trim() !== id) {
+      throw new Error('แถว PO ใน Google Sheets ผูกกับ Firestore ID อื่น; ไม่มีการเปลี่ยนข้อมูล');
+    }
+
+    poSyncSheetRowToFirestore_(sheet, rowNumber, true, id);
+    var record = firebaseGetDocument_('purchaseOrders', id);
+    firebasePatchDocument_('syncConflicts', conflict.id, {
+      status: 'resolved',
+      resolution: 'sheet',
+      resolvedAt: new Date().toISOString()
+    });
+    return {
+      success: true,
+      source: 'sheet',
+      id: id,
+      row: rowNumber,
+      revision: record && record.revision
+    };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function poSyncCustomerFromFirestore_(data) {
@@ -767,7 +800,6 @@ function poValidateMigrationRows_(sheet, lastRow) {
   var rows = sheet.getRange(
     PO_TRACKER_CFG.START_ROW, 1, lastRow - PO_TRACKER_CFG.START_ROW + 1, PO_TRACKER_CFG.NUM_COLS
   ).getValues();
-  var invoiceNumbers = {};
   var ids = {};
   var columns = poRequireSyncColumns_();
   var stableIds = sheet.getRange(
@@ -778,11 +810,6 @@ function poValidateMigrationRows_(sheet, lastRow) {
   ).getValues();
   rows.forEach(function (row, index) {
     if (!String(row[0] || '').trim() && !String(row[1] || '').trim() && !String(row[2] || '').trim()) return;
-    var invoice = String(row[5] || '').trim().toLowerCase();
-    if (invoice && invoiceNumbers[invoice]) {
-      throw new Error('Invoice ซ้ำใน Sheet: ' + row[5]);
-    }
-    if (invoice) invoiceNumbers[invoice] = true;
     var amountText = String(row[4] === null || row[4] === undefined ? '' : row[4]).trim();
     if (!String(row[1] || '').trim() || !String(row[2] || '').trim() ||
         !amountText || !/\d/.test(amountText) ||
@@ -1012,16 +1039,11 @@ function poMigrationAudit() {
     ? sheet.getRange(PO_TRACKER_CFG.START_ROW, 1, last - PO_TRACKER_CFG.START_ROW + 1, width).getValues()
     : [];
   var sheetRecords = {};
-  var duplicateInvoices = [];
-  var invoiceNumbers = {};
   rows.forEach(function (row, index) {
     if ((!String(row[0] || '').trim() && !String(row[1] || '').trim() && !String(row[2] || '').trim()) ||
         row[columns.deletedAt - 1]) return;
     var id = String(row[columns.id - 1] || '').trim();
     if (!id) return;
-    var invoice = String(row[5] || '').trim().toLowerCase();
-    if (invoice && invoiceNumbers[invoice]) duplicateInvoices.push(String(row[5] || '').trim());
-    if (invoice) invoiceNumbers[invoice] = true;
     sheetRecords[id] = {
       row: row,
       rowNumber: PO_TRACKER_CFG.START_ROW + index
@@ -1078,7 +1100,6 @@ function poMigrationAudit() {
     missingInFirestore: missingInFirestore,
     extraInFirestore: extraInFirestore,
     mismatchedRecords: mismatched,
-    duplicateInvoices: duplicateInvoices,
     sheetCustomerCount: Object.keys(sheetCustomers).length,
     firestoreCustomerCount: Object.keys(firestoreCustomerById).length,
     missingCustomers: missingCustomers,
