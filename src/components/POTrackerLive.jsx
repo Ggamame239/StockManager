@@ -156,6 +156,7 @@ export function POTracker() {
             setSelected(null)
             setToast(result.message || 'บันทึก PO เรียบร้อย')
         } catch (saveError) {
+            console.error('Failed to save PO', saveError)
             if (saveError.persisted) setSelected({ ...record, id: saveError.documentId })
             setError(saveError.message)
         }
